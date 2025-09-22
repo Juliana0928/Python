@@ -1,6 +1,7 @@
 # Webscraping
 
 * 1. El siguiente código hace un webscraping de Openlibrary
+* 2. Posteriormente hace un análisis de los resultados extraídos en formato CSV
 
 import time
 import pandas as pd
@@ -170,3 +171,136 @@ df = pd.DataFrame(books_data)
 df.to_csv("openlibrary_books.csv", index=False, encoding="utf-8-sig")
 
 print("Scraping completado. Datos guardados en 'openlibrary_books.csv'")
+
+
+
+## Análisis
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+import re
+
+
+# ---------------------------
+# Cargar datos
+# ---------------------------
+df = pd.read_csv("openlibrary_books.csv", encoding="utf-8-sig")
+
+# Limpiar columnas numéricas
+df["Rating"] = df["Rating"].str.extract(r"([0-9.]+)").astype(float)
+df["Páginas"] = pd.to_numeric(df["Páginas"], errors="coerce")
+
+# ---------------------------
+# Extraer solo el año de "Año publicación (detalle)" usando regex
+# ---------------------------
+def extraer_año(texto):
+    if pd.isna(texto):
+        return None
+    match = re.search(r"(\d{4})", str(texto))
+    return int(match.group(1)) if match else None
+
+df["Año publicación (detalle)"] = df["Año publicación (detalle)"].apply(extraer_año)
+
+# ---------------------------
+# Tomar solo el primer tema como tema principal
+# ---------------------------
+df["Tema principal"] = df["Temas"].fillna("").apply(lambda x: x.split(",")[0].strip() if x else None)
+df_subjects = df.dropna(subset=["Tema principal"]).copy()
+
+# Crear carpeta para gráficos
+os.makedirs("visualizaciones", exist_ok=True)
+
+# ---------------------------
+# 1. Cantidad de libros por tema principal
+# ---------------------------
+books_por_genero = df_subjects.groupby("Tema principal")["Título"].count().sort_values(ascending=False)
+
+plt.figure(figsize=(12,6))
+sns.barplot(x=books_por_genero.values, y=books_por_genero.index, palette="viridis")
+plt.title("Cantidad de libros por tema principal")
+plt.xlabel("Cantidad de libros")
+plt.ylabel("Tema principal")
+plt.tight_layout()
+plt.savefig("visualizaciones/libros_por_tema_principal.png")
+plt.close()
+
+# ---------------------------
+# 2. Autores destacados por tema principal (top 3)
+# ---------------------------
+autores_genero = df_subjects.groupby("Tema principal")["Autor(es)"].apply(lambda x: x.value_counts().head(3))
+autores_genero.to_csv("visualizaciones/autores_por_tema_principal.csv", encoding="utf-8-sig")
+
+# ---------------------------
+# 3. Libros publicados por año y tema principal
+# ---------------------------
+libros_por_año_genero = (
+    df_subjects.groupby(["Año publicación (detalle)", "Tema principal"])
+    .size()
+    .reset_index(name="Cantidad de libros")
+)
+
+# Gráfico: libros por año agrupados por género
+plt.figure(figsize=(14,7))
+sns.lineplot(
+    data=libros_por_año_genero,
+    x="Año publicación (detalle)",
+    y="Cantidad de libros",
+    hue="Tema principal",
+    marker="o"
+)
+
+plt.title("Cantidad de libros publicados por año agrupados por género")
+plt.xlabel("Año de publicación")
+plt.ylabel("Cantidad de libros")
+plt.legend(title="Género", bbox_to_anchor=(1.05, 1), loc="upper left")
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.tight_layout()
+plt.savefig("visualizaciones/libros_por_año_genero.png")
+plt.close()
+# ---------------------------
+# 4. 10 libros con mayor rating entre 1950 y 2010
+# ---------------------------
+top_books = df[(df["Año publicación (detalle)"]>=1950) & (df["Año publicación (detalle)"]<=2010)]
+top_books = top_books.sort_values(by="Rating", ascending=False).head(10)
+top_books.to_csv("visualizaciones/top10_libros_rating_1950_2010.csv", encoding="utf-8-sig")
+
+# ---------------------------
+# 5. Libro más largo
+# ---------------------------
+libro_mas_largo = df.loc[df["Páginas"].idxmax()]
+libro_mas_largo.to_csv("visualizaciones/libro_mas_largo.csv", encoding="utf-8-sig")
+
+# ---------------------------
+# 6. Cantidad de libros en japonés
+# ---------------------------
+libros_japones = df[df["Idioma"]=="japonés"].shape[0]
+
+# ---------------------------
+# 7. Rating promedio para Thriller
+# ---------------------------
+thriller_rating_prom = df_subjects[df_subjects["Tema principal"]=="Thriller"]["Rating"].mean()
+
+print("Rating promedio de Thriller:", thriller_rating_prom)
+
+# ---------------------------
+# 8. Gráfico de rating promedio por tema principal
+# ---------------------------
+ratings_genero = df_subjects.groupby("Tema principal")["Rating"].mean().sort_values(ascending=False)
+
+plt.figure(figsize=(12,6))
+sns.barplot(x=ratings_genero.values, y=ratings_genero.index, palette="magma")
+plt.title("Rating promedio por tema principal")
+plt.xlabel("Rating promedio")
+plt.ylabel("Tema principal")
+plt.tight_layout()
+plt.savefig("visualizaciones/rating_promedio_tema_principal.png")
+plt.close()
+
+# ---------------------------
+# Resumen de resultados
+# ---------------------------
+print(f"Cantidad de libros en japonés: {libros_japones}")
+print(f"Rating promedio de Thriller: {thriller_rating_prom:.2f}")
+print("Los archivos y gráficos se han guardado en la carpeta 'visualizaciones'.")
