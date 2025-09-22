@@ -1,0 +1,172 @@
+# Webscraping
+
+* 1. El siguiente código hace un webscraping de Openlibrary
+
+import time
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
+'''
+Configuración inicial de Selenium:
+- Se abre Google Chrome en modo maximizado.
+- Se usa ChromeDriverManager para instalar el driver automáticamente.
+'''
+options = Options()
+options.add_argument("--start-maximized")
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+'''
+URL base de búsqueda en OpenLibrary:
+Filtra por libros con acceso a eBook (borrowable)
+y ordenados por tendencia.
+'''
+base_url = "https://openlibrary.org/search?q=ebook_access%3A%5Bborrowable+TO+%2A%5D&mode=everything&sort=trending%2Ctrending_score_hourly_sum"
+driver.get(base_url)
+time.sleep(3)
+
+'''
+Número de páginas a recorrer.
+El usuario define cuántas páginas de resultados quiere scrapear.
+'''
+num_pages = int(input("¿Cuántas páginas quieres consultar? "))
+
+books_data = []      # lista donde se guardan los datos
+visited_links = set()  # control para no repetir libros
+page = 1
+
+'''
+Bucle principal:
+- Recorre las páginas de resultados hasta llegar al límite indicado.
+- En cada página extrae los libros (título, autor, rating, etc.).
+- Luego entra al detalle de cada libro para extraer más información (idioma, páginas, subjects, etc.).
+'''
+while page <= num_pages:
+    print(f"Scrapeando página {page}...")
+
+    # Obtener todos los libros de la página actual
+    books = driver.find_elements(By.CSS_SELECTOR, "li.searchResultItem")
+    
+    for book in books:
+        ''' Extraer título y enlace del libro desde la página principal '''
+        try:
+            title_elem = book.find_element(By.CSS_SELECTOR, "a.results")
+            title = title_elem.text
+            link = title_elem.get_attribute("href")
+        except:
+            title, link = None, None
+
+        if not link or link in visited_links:
+            continue
+        visited_links.add(link)
+
+        ''' Autor/es del libro (desde la página principal) '''
+        try:
+            author = book.find_element(By.CSS_SELECTOR, "span.bookauthor").text
+        except:
+            author = None
+
+        ''' Año de publicación y número de ediciones (principal) '''
+        try:
+            stats = book.find_element(By.CSS_SELECTOR, "span.resultDetails").text
+            year_pub, ediciones = None, None
+            if "First published in" in stats:
+                year_pub = stats.split("First published in")[-1].split("—")[0].strip()
+            if "editions" in stats:
+                ediciones = "".join([s for s in stats.split() if s.isdigit()])
+        except:
+            year_pub, ediciones = None, None
+
+        ''' Rating del libro (principal) '''
+        try:
+            rating = book.find_element(By.CSS_SELECTOR, "span[itemprop='ratingValue']").text
+        except:
+            rating = None
+
+        '''
+        Entrar al detalle de cada libro:
+        Aquí se obtiene información adicional como:
+        - Publish Date
+        - Ediciones (detalles)
+        - Idioma
+        - Número de páginas
+        - Temas (Subjects)
+        '''
+        driver.get(link)
+        time.sleep(2)
+
+        try:
+            publish_date = driver.find_element(By.CSS_SELECTOR, "span[itemprop='datePublished']").text
+        except:
+            publish_date = None
+
+        try:
+            editions_text = driver.find_element(By.CSS_SELECTOR, "a[data-ol-link-track='BookPageNav|EditionTable']").text
+            editions_detail = "".join([s for s in editions_text if s.isdigit()])
+        except:
+            editions_detail = None
+
+        try:
+            language = driver.find_element(By.CSS_SELECTOR, "span[itemprop='inLanguage']").text
+        except:
+            language = None
+
+        try:
+            pages = driver.find_element(By.CSS_SELECTOR, "span[itemprop='numberOfPages']").text
+        except:
+            pages = None
+
+        try:
+            subjects = ", ".join([s.text for s in driver.find_elements(By.CSS_SELECTOR, "div.section.link-box a")])
+        except:
+            subjects = None
+
+        ''' Guardar toda la información recolectada en un diccionario '''
+        books_data.append({
+            "Título": title,
+            "Autor(es)": author,
+            "Año publicación (principal)": year_pub,
+            "Ediciones (principal)": ediciones,
+            "Rating": rating,
+            "Año publicación (detalle)": publish_date,
+            "Ediciones (detalle)": editions_detail,
+            "Idioma": language,
+            "Páginas": pages,
+            "Temas": subjects,
+            "Link": link
+        })
+
+        ''' Regresar a la página de resultados '''
+        driver.back()
+        time.sleep(2)
+
+    '''
+    Navegar a la siguiente página de resultados:
+    Se hace scroll hasta el final y se busca el botón "Siguiente >"
+    '''
+    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+    time.sleep(2)
+
+    try:
+        next_button = driver.find_element(By.LINK_TEXT, "Siguiente >")
+        next_button.click()
+        page += 1
+        time.sleep(3)
+    except:
+        print("No hay más páginas.")
+        break
+
+''' Cerrar el navegador '''
+driver.quit()
+
+'''
+Guardar los resultados en CSV con codificación UTF-8
+'''
+df = pd.DataFrame(books_data)
+df.to_csv("openlibrary_books.csv", index=False, encoding="utf-8-sig")
+
+print("Scraping completado. Datos guardados en 'openlibrary_books.csv'")
